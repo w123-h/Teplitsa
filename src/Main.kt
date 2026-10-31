@@ -12,15 +12,20 @@ data class SensorReading(
 )
 
 // Корутины + канал: генерирует 10 показаний
-suspend fun emitSensorData(channel: SendChannel<SensorReading>, sensorId: String) {
-    repeat(10) {
-        val value = when (sensorId) {
-            "TEMP" -> Random.nextDouble(18.0, 35.0)
-            "HUM"  -> Random.nextDouble(30.0, 90.0)
-            else   -> Random.nextDouble(300.0, 800.0)
+suspend fun emitSensorData(channel: SendChannel<SensorReading>) = coroutineScope {
+    val sensors = listOf("TEMP", "HUM", "CO2")
+    for (sensorId in sensors) {
+        launch {
+            repeat(10) {
+                val value = when (sensorId) {
+                    "TEMP" -> Random.nextDouble(18.0, 35.0)
+                    "HUM"  -> Random.nextDouble(30.0, 90.0)
+                    else   -> Random.nextDouble(300.0, 800.0)
+                }
+                channel.send(SensorReading(sensorId, value, System.currentTimeMillis()))
+                delay(500)
+            }
         }
-        channel.send(SensorReading(sensorId, value, System.currentTimeMillis()))
-        delay(500)
     }
 }
 
@@ -49,15 +54,11 @@ fun main() = runBlocking {
     val channel = Channel<SensorReading>()
 
     // Запускаем 3 датчика параллельно
-    val jobs = listOf("TEMP", "HUM", "CO2").map { id ->
-        launch {
-            emitSensorData(channel, id)
-        }
-    }
+    val job = launch { emitSensorData(channel) }
 
     // Закрываем канал после завершения всех датчиков
     launch {
-        jobs.joinAll()
+        job.join()
         channel.close()
     }
 
@@ -81,7 +82,7 @@ fun main() = runBlocking {
         .map { it.copy(value = it.value * 1.1) }
         .take(5)
         .onEach { println("  Обработано: ${it.sensorId} = ${"%.2f".format(it.value)}") }
-        .toList()   // терминальная операция — поток запускается здесь
+        .toList()
 
     println("  Собрано ${result.size} показаний")
 
@@ -93,18 +94,10 @@ fun main() = runBlocking {
         .filter { it.value > 20.0 }
         .map { it.copy(value = it.value * 1.1) }
         .take(5)
-        .fold(0.0 to 0) { (s, c), r ->
-            (s + r.value) to (c + 1)
-        }
+        .fold(0.0 to 0) { (s, c), r -> (s + r.value) to (c + 1) }
 
     val avg = if (cnt > 0) sum / cnt else 0.0
     println("  Сумма: ${"%.2f".format(sum)}")
     println("  Количество: $cnt")
     println("  Среднее: ${"%.2f".format(avg)}")
-
-    // ---------- Сравнение ----------
-    println("\n" + "=".repeat(50))
-    println("Разница:")
-    println("  Канал  — горячий, ручная обработка, нужно закрывать")
-    println("  Flow   — холодный (ленивый), декларативный, запускается только при collect/toList/fold")
 }
